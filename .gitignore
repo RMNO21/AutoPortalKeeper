@@ -1,0 +1,14 @@
+# Local state & credentials (NEVER commit credentials)
+accounts.json
+state.json
+*.log
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Temp files
+*.tmp
+*.bak
+.DS_Store
+Thumbs.db
