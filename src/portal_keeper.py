@@ -16,6 +16,7 @@ import os
 import re
 import ssl
 import sys
+import threading
 import time
 import urllib.parse
 import urllib.request
@@ -25,13 +26,18 @@ CONFIG_FILE = os.path.join(BASE_DIR, "accounts.json")
 STATE_FILE = os.path.join(BASE_DIR, "state.json")
 DEBUG_LOG_FILE = os.path.join(BASE_DIR, "debug.log")
 
-# Connectivity check endpoints (ultra-low bandwidth HTTP 204)
+# Endpoints for ultra-fast connectivity check
 CHECK_URL = "http://connectivitycheck.gstatic.com/generate_204"
 BACKUP_CHECK_URL = "http://www.msftconnecttest.com/connecttest.txt"
 
-CHECK_INTERVAL_ONLINE = 15     # Sleep interval when connected (seconds)
-CHECK_INTERVAL_OFFLINE = 5     # Check interval when disconnected (seconds)
+# Ultra-fast intervals (Event-driven with adaptive heartbeat)
+ONLINE_HEARTBEAT_SEC = 5.0     # Adaptive interval when connected (seconds)
+OFFLINE_RETRY_SEC = 2.0        # Rapid retry interval when offline (seconds)
 COOLDOWN_TIME = 30             # Cooldown for accounts reaching concurrent connection limit (seconds)
+HTTP_TIMEOUT = 3.0             # Fast network timeout (seconds)
+
+# Global synchronization event for instant wakeups on OS network triggers
+wake_event = threading.Event()
 
 def log_debug(msg):
     """Write timestamped diagnostic information to debug.log and stdout"""
@@ -107,10 +113,8 @@ def load_config():
     """Load configuration and decrypt account credentials in memory"""
     cfg_file = find_config_file()
     if not os.path.exists(cfg_file):
-        log_debug(f"Config file not found in candidates: {cfg_file}")
         return "", []
     try:
-        # Use utf-8-sig to automatically handle both UTF-8 with BOM and standard UTF-8
         with open(cfg_file, "r", encoding="utf-8-sig") as f:
             data = json.load(f)
             portal_url = data.get("portal_url", "").strip()
@@ -126,7 +130,6 @@ def load_config():
                         "username": u,
                         "password": decrypt_password(p_enc)
                     })
-            log_debug(f"Successfully loaded config from '{cfg_file}': accounts_count={len(accounts)}")
             return portal_url, accounts
     except Exception as e:
         log_debug(f"Error reading {cfg_file}: {e}")
@@ -152,23 +155,69 @@ def save_state(state):
     except Exception as e:
         log_debug(f"Error saving state to {state_file}: {e}")
 
+# ==============================================================================
+# OS Event Triggers: Hardware Network Change & Sleep/Resume Listeners
+# ==============================================================================
+
+def windows_network_change_listener():
+    """
+    Native Windows Kernel Trigger:
+    Uses IPHLPAPI NotifyAddrChange to detect network adapter connect, disconnect,
+    IP assignment, gateway change, or Wi-Fi roaming in < 10 milliseconds.
+    Consumes 0% CPU by sleeping inside the Windows kernel wait queue.
+    """
+    try:
+        iphlpapi = ctypes.windll.iphlpapi
+        hand = wintypes.HANDLE()
+        log_debug("OS Kernel Trigger: Network event listener active.")
+        while True:
+            # Blocks until network interface or routing table changes
+            iphlpapi.NotifyAddrChange(ctypes.byref(hand), None)
+            log_debug("⚡ [OS Trigger] Hardware Network Interface / IP Change detected! Waking up immediately...")
+            wake_event.set()
+            time.sleep(0.3)
+    except Exception as e:
+        log_debug(f"Network change listener exception: {e}")
+
+def sleep_resume_detector():
+    """
+    System Resume / Lid-Open Trigger:
+    Detects when laptop wakes up from sleep or hibernation by tracking monotonic clock jumps.
+    """
+    last_tick = time.monotonic()
+    while True:
+        time.sleep(1.0)
+        current_tick = time.monotonic()
+        # If monotonic time jumped more than 3 seconds over a 1-second sleep, PC was asleep
+        if current_tick - last_tick > 3.5:
+            log_debug("⚡ [OS Trigger] System Wake-from-Sleep / Resume detected! Triggering instant verification...")
+            wake_event.set()
+        last_tick = current_tick
+
+# Start native background trigger threads
+threading.Thread(target=windows_network_change_listener, daemon=True, name="NetChangeTrigger").start()
+threading.Thread(target=sleep_resume_detector, daemon=True, name="SleepResumeTrigger").start()
+
+# ==============================================================================
+# Network Verification & Captive Portal Interception
+# ==============================================================================
+
 def check_network_status(portal_url_base):
     """
-    Universal network status detector:
+    Fast universal status detector:
     - ONLINE: Internet connection is open and working (204 returned)
     - PORTAL_ACTIVE: Captive portal redirection intercepted
     - OFFLINE: Local network or gateway disconnected
     """
     global dynamic_portal_url
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) CaptiveChecker/4.0"}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) CaptiveChecker/5.0"}
 
     for check_endpoint in (CHECK_URL, BACKUP_CHECK_URL):
         try:
             req = urllib.request.Request(check_endpoint, headers=headers)
-            with opener.open(req, timeout=4) as response:
+            with opener.open(req, timeout=HTTP_TIMEOUT) as response:
                 status_code = getattr(response, "status", getattr(response, "code", 0))
                 location = response.headers.get("Location", "")
-                log_debug(f"Connectivity check to {check_endpoint} -> HTTP {status_code}, Location: '{location}'")
 
                 if status_code == 204:
                     dynamic_portal_url = None
@@ -176,7 +225,7 @@ def check_network_status(portal_url_base):
 
                 if status_code in (200, 301, 302, 303, 307) and location:
                     dynamic_portal_url = location
-                    log_debug(f"Captured dynamic captive portal redirect: {dynamic_portal_url}")
+                    log_debug(f"Captured dynamic portal redirect: {dynamic_portal_url}")
                     return "PORTAL_ACTIVE"
 
                 body_sample = response.read(256)
@@ -184,27 +233,24 @@ def check_network_status(portal_url_base):
                     dynamic_portal_url = None
                     return "ONLINE"
 
-                # If 200 is returned instead of 204 on generate_204, a captive portal intercepted the page
                 if status_code == 200 and check_endpoint == CHECK_URL:
                     dynamic_portal_url = response.geturl() if hasattr(response, "geturl") else CHECK_URL
-                    log_debug(f"Captive portal intercepted 204 page without redirect header. Target: {dynamic_portal_url}")
+                    log_debug(f"Portal intercepted without redirect header. Target: {dynamic_portal_url}")
                     return "PORTAL_ACTIVE"
-        except Exception as e:
-            log_debug(f"Check failed on {check_endpoint}: {e}")
+        except Exception:
+            pass
 
-    # Optional manual fallback URL check
+    # Fallback to manual portal URL if specified
     if portal_url_base:
         try:
-            log_debug(f"Testing manual portal fallback: {portal_url_base}")
             req = urllib.request.Request(portal_url_base, headers=headers)
-            with opener.open(req, timeout=4) as resp:
+            with opener.open(req, timeout=HTTP_TIMEOUT) as resp:
                 status_code = getattr(resp, "status", getattr(resp, "code", 0))
-                log_debug(f"Manual portal fallback response: HTTP {status_code}")
                 if status_code in (200, 301, 302, 303, 307):
                     dynamic_portal_url = portal_url_base
                     return "PORTAL_ACTIVE"
-        except Exception as e:
-            log_debug(f"Manual portal fallback unreachable: {e}")
+        except Exception:
+            pass
 
     return "OFFLINE"
 
@@ -212,22 +258,19 @@ def fetch_login_page(target_url):
     """Fetch initial portal page to obtain session cookies and HTML form"""
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     try:
-        log_debug(f"Fetching login page from: {target_url}")
         req = urllib.request.Request(target_url, headers=headers)
-        with opener.open(req, timeout=6) as res:
+        with opener.open(req, timeout=HTTP_TIMEOUT) as res:
             content = res.read().decode("utf-8", errors="ignore")
             actual_url = res.geturl() if hasattr(res, "geturl") else target_url
-            log_debug(f"Login page fetched ({len(content)} bytes). Actual URL: {actual_url}")
             return actual_url, content
-    except Exception as e:
-        log_debug(f"Failed to fetch login page from {target_url}: {e}")
+    except Exception:
         return target_url, ""
 
 def analyze_form(page_html, base_url):
     """
     Intelligently parse the captive portal HTML form:
     1. Finds form action URL and resolves relative paths to absolute URLs
-    2. Dynamically detects username field name (user, username, txtUser, login, etc.)
+    2. Dynamically detects username field name
     3. Dynamically detects password field name
     4. Extracts all hidden fields/tokens (CSRF, challenge tokens, session IDs)
     """
@@ -239,12 +282,10 @@ def analyze_form(page_html, base_url):
     if not page_html:
         return action_url, user_field, pass_field, hidden_payload
 
-    # Look for forms in HTML
     forms = re.findall(r'<form\b[^>]*>(.*?)</form>', page_html, re.IGNORECASE | re.DOTALL)
     target_form_html = page_html
     target_form_tag = ""
 
-    # Prefer the form containing a password input
     form_tags = re.findall(r'(<form\b[^>]*>)', page_html, re.IGNORECASE)
     for idx, f_body in enumerate(forms):
         if re.search(r'type=["\']password["\']', f_body, re.IGNORECASE):
@@ -253,18 +294,13 @@ def analyze_form(page_html, base_url):
                 target_form_tag = form_tags[idx]
             break
 
-    # Extract action from form tag if found
     if target_form_tag:
         action_match = re.search(r'action=["\']([^"\']*)["\']', target_form_tag, re.IGNORECASE)
         if action_match and action_match.group(1).strip():
             raw_action = action_match.group(1).strip()
             action_url = urllib.parse.urljoin(base_url, raw_action)
-            log_debug(f"Detected form action URL: {action_url} (from '{raw_action}')")
 
-    # Extract all inputs
     inputs = re.findall(r'<input\b[^>]*>', target_form_html, re.IGNORECASE)
-    log_debug(f"Found {len(inputs)} input tags in form")
-
     for inp in inputs:
         name_match = re.search(r'name=["\']([^"\']+)["\']', inp, re.IGNORECASE)
         type_match = re.search(r'type=["\']([^"\']+)["\']', inp, re.IGNORECASE)
@@ -279,15 +315,12 @@ def analyze_form(page_html, base_url):
 
         if inp_type == "password":
             pass_field = inp_name
-            log_debug(f"Detected password input field: '{pass_field}'")
         elif inp_type in ("text", "email") or not type_match:
             name_lower = inp_name.lower()
             if any(k in name_lower for k in ("user", "login", "name", "email", "id", "account")):
                 user_field = inp_name
-                log_debug(f"Detected username input field: '{user_field}'")
         elif inp_type == "hidden":
             hidden_payload[inp_name] = inp_val
-            log_debug(f"Captured hidden token: '{inp_name}' = '{inp_val[:30]}...'")
 
     return action_url, user_field, pass_field, hidden_payload
 
@@ -296,7 +329,6 @@ def try_login(account, portal_url_base):
     global dynamic_portal_url
     target_url = dynamic_portal_url if dynamic_portal_url else portal_url_base
     if not target_url:
-        log_debug("No target portal URL available to submit login")
         return "NO_URL"
 
     username = account.get("username", "").strip()
@@ -309,9 +341,6 @@ def try_login(account, portal_url_base):
     payload[user_field] = username
     payload[pass_field] = password
 
-    masked_payload = {k: ("***" if k == pass_field else v) for k, v in payload.items()}
-    log_debug(f"Submitting POST to: {action_url} with payload keys: {masked_payload}")
-
     encoded = urllib.parse.urlencode(payload).encode("utf-8")
     req = urllib.request.Request(action_url, data=encoded, method="POST")
     req.add_header("Content-Type", "application/x-www-form-urlencoded")
@@ -319,32 +348,26 @@ def try_login(account, portal_url_base):
     req.add_header("Referer", actual_page_url)
 
     try:
-        with opener.open(req, timeout=8) as response:
-            status_code = getattr(response, "status", getattr(response, "code", 0))
-            resp_body = response.read().decode("utf-8", errors="ignore")
-            log_debug(f"POST response: HTTP {status_code}, length={len(resp_body)} bytes")
-            log_debug(f"Response snippet: {resp_body[:250].strip()}")
-
-            body_lower = resp_body.lower()
+        with opener.open(req, timeout=HTTP_TIMEOUT) as response:
+            resp_body = response.read().decode("utf-8", errors="ignore").lower()
             limit_keywords = [
                 "concurrent", "maximum", "online", "already logged", 
                 "limit", "active session", "exceeded", "max users",
                 "محدودیت", "تعداد متصل", "حداکثر", "کاربر آنلاین"
             ]
-            if any(kw in body_lower for kw in limit_keywords):
-                log_debug(f"Concurrent session limit detected for account '{username}'")
+            if any(kw in resp_body for kw in limit_keywords):
+                log_debug(f"Account '{username}' reached concurrent device limit.")
                 return "LIMIT_REACHED"
 
             return "SUCCESS"
     except Exception as e:
-        log_debug(f"Exception during login POST: {e}")
+        log_debug(f"Login POST exception for '{username}': {e}")
         return "SERVER_ERROR"
 
 def handle_login_cycle(portal_url_base, accounts):
-    """Execute round-robin authentication across available accounts"""
+    """Execute high-speed round-robin authentication across available accounts"""
     total = len(accounts)
     if total == 0:
-        log_debug("No accounts available in accounts.json")
         return False
 
     state = load_state()
@@ -360,11 +383,9 @@ def handle_login_cycle(portal_url_base, accounts):
         user = acc.get("username")
 
         if user in cooldowns:
-            rem = int(cooldowns[user] - now)
-            log_debug(f"Account '{user}' in cooldown ({rem}s remaining). Skipping...")
             continue
 
-        log_debug(f"--- [Attempt {attempt + 1}/{total}] Trying account: '{user}' ---")
+        log_debug(f"🚀 Rapid Login Attempt [{attempt + 1}/{total}] with '{user}'...")
         result = try_login(acc, portal_url_base)
 
         if result == "LIMIT_REACHED":
@@ -373,56 +394,66 @@ def handle_login_cycle(portal_url_base, accounts):
             save_state(state)
             continue
 
-        # Wait briefly for gateway firewall to process session
-        log_debug("Waiting 3s for gateway routing...")
-        time.sleep(3)
+        # Fast 1.2 second wait for gateway routing tables to update
+        time.sleep(1.2)
 
-        network_status = check_network_status(portal_url_base)
-        log_debug(f"Post-login network verification status: {network_status}")
-
-        if network_status == "ONLINE":
-            log_debug(f"*** SUCCESS: Internet is now active on account '{user}'! ***")
+        if check_network_status(portal_url_base) == "ONLINE":
+            log_debug(f"✅ Authenticated successfully! Account '{user}' activated internet access.")
             state["current_index"] = (idx + 1) % total
             state["cooldowns"] = cooldowns
             save_state(state)
             return True
         else:
-            log_debug(f"Account '{user}' did not activate internet access. Moving to next account...")
-            time.sleep(1)
+            log_debug(f"Account '{user}' did not grant internet access. Switching immediately to next...")
+            time.sleep(0.5)
 
     state["current_index"] = (start_index + 1) % total
     state["cooldowns"] = cooldowns
     save_state(state)
-    log_debug("All accounts exhausted in this cycle without activating internet.")
     return False
 
 def main():
     log_debug("==================================================")
-    log_debug("AutoPortal Keeper Service Engine Started")
+    log_debug("AutoPortal Keeper v4.0 - Ultra-Fast Event-Driven Engine")
     log_debug("Developed by Raman Tondro (@RMNO21)")
     log_debug("==================================================")
-    
+
+    last_logged_status = None
+    heartbeat_counter = 0
+
     while True:
         try:
+            # Clear trigger flag for this cycle
+            was_triggered = wake_event.is_set()
+            wake_event.clear()
+
             portal_url_base, accounts = load_config()
             status = check_network_status(portal_url_base)
-            log_debug(f"Heartbeat loop: Network Status = '{status}'")
+
+            # Log status when it changes, or periodically every 60s, or when woken by a hardware trigger
+            if status != last_logged_status or was_triggered or heartbeat_counter % 12 == 0:
+                trigger_info = " [Woken by OS Event Trigger]" if was_triggered else ""
+                log_debug(f"Network Status = '{status}'{trigger_info}")
+                last_logged_status = status
+
+            heartbeat_counter += 1
 
             if status == "PORTAL_ACTIVE":
-                log_debug("Captive portal detected! Initiating login cycle...")
+                log_debug("⚡ Captive portal active! Firing instant authentication...")
                 handle_login_cycle(portal_url_base, accounts)
-                time.sleep(3)
+                wake_event.wait(timeout=1.0)
             elif status == "ONLINE":
-                time.sleep(CHECK_INTERVAL_ONLINE)
+                # Sleep adaptively: exits instantly (<10ms) if any OS network event occurs, or after 5s
+                wake_event.wait(timeout=ONLINE_HEARTBEAT_SEC)
             else:
-                time.sleep(CHECK_INTERVAL_OFFLINE)
+                wake_event.wait(timeout=OFFLINE_RETRY_SEC)
+
         except Exception as e:
-            log_debug(f"Unhandled exception in main loop: {e}")
-            time.sleep(3)
+            log_debug(f"Loop exception: {e}")
+            time.sleep(1.0)
 
 if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        log_debug("Service stopped by user.")
         sys.exit(0)

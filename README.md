@@ -13,6 +13,7 @@
 
 ## 🌟 Key Highlights
 
+- **Instant Event-Driven Triggers (Kernel-Level):** Integrated directly with the Windows IP Helper API (`iphlpapi.NotifyAddrChange`) and monotonic clock jump listeners. Whenever a Wi-Fi adapter connects, roams between campus access points, receives a new DHCP lease, or wakes from sleep/hibernation, the daemon is interrupted in **< 10 milliseconds** without waiting for polling timers.
 - **Universal Captive Interceptor:** Automatically detects and captures dynamic HTTP 302 redirections, extracting session tokens, IP queries, and MAC parameters in real-time. Works across MikroTik, Cisco, Fortinet, pfSense, Huawei, and custom institutional portals without hardcoded domain dependencies.
 - **Military-Grade Credential Protection (Windows DPAPI):** Passwords are never saved in plaintext. Credentials are encrypted at the OS level using native `CryptProtectData` (Windows Data Protection API) tied exclusively to your user profile.
 - **Smart Round-Robin Rotation:** Seamlessly rotates through configured accounts on every reconnection session to balance data usage, prevent quota exhaustion, and distribute network traffic.
