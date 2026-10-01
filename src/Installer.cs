@@ -606,7 +606,7 @@ namespace AutoPortalSetup
                 json.AppendLine("  ]");
                 json.AppendLine("}");
 
-                File.WriteAllText(Path.Combine(installDir, "accounts.json"), json.ToString(), Encoding.UTF8);
+                File.WriteAllText(Path.Combine(installDir, "accounts.json"), json.ToString(), new UTF8Encoding(false));
 
                 string currentDir = AppDomain.CurrentDomain.BaseDirectory;
                 string scriptSrc = Path.Combine(currentDir, "portal_keeper.py");

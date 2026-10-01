@@ -88,13 +88,30 @@ urllib.request.install_opener(opener)
 
 dynamic_portal_url = None
 
+def find_config_file():
+    """Locate accounts.json either locally or in LocalAppData"""
+    candidates = [
+        os.path.join(BASE_DIR, "accounts.json"),
+        os.path.join(os.environ.get("LOCALAPPDATA", ""), "AutoPortalKeeper", "accounts.json")
+    ]
+    for c in candidates:
+        if c and os.path.exists(c):
+            return c
+    return candidates[0]
+
+def find_state_file():
+    cfg = find_config_file()
+    return os.path.join(os.path.dirname(cfg), "state.json")
+
 def load_config():
     """Load configuration and decrypt account credentials in memory"""
-    if not os.path.exists(CONFIG_FILE):
-        log_debug(f"Config file not found: {CONFIG_FILE}")
+    cfg_file = find_config_file()
+    if not os.path.exists(cfg_file):
+        log_debug(f"Config file not found in candidates: {cfg_file}")
         return "", []
     try:
-        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+        # Use utf-8-sig to automatically handle both UTF-8 with BOM and standard UTF-8
+        with open(cfg_file, "r", encoding="utf-8-sig") as f:
             data = json.load(f)
             portal_url = data.get("portal_url", "").strip()
             raw_accounts = data.get("accounts", [])
@@ -107,17 +124,18 @@ def load_config():
                         "username": u,
                         "password": decrypt_password(p_enc)
                     })
-            log_debug(f"Loaded config: portal_url='{portal_url}', accounts_count={len(accounts)}")
+            log_debug(f"Successfully loaded config from '{cfg_file}': accounts_count={len(accounts)}")
             return portal_url, accounts
     except Exception as e:
-        log_debug(f"Error reading {CONFIG_FILE}: {e}")
+        log_debug(f"Error reading {cfg_file}: {e}")
         return "", []
 
 def load_state():
     """Load rotation index and active cooldowns"""
-    if os.path.exists(STATE_FILE):
+    state_file = find_state_file()
+    if os.path.exists(state_file):
         try:
-            with open(STATE_FILE, "r", encoding="utf-8") as f:
+            with open(state_file, "r", encoding="utf-8-sig") as f:
                 return json.load(f)
         except Exception:
             pass
@@ -125,11 +143,12 @@ def load_state():
 
 def save_state(state):
     """Persist rotation state to disk"""
+    state_file = find_state_file()
     try:
-        with open(STATE_FILE, "w", encoding="utf-8") as f:
+        with open(state_file, "w", encoding="utf-8") as f:
             json.dump(state, f, indent=2)
     except Exception as e:
-        log_debug(f"Error saving state: {e}")
+        log_debug(f"Error saving state to {state_file}: {e}")
 
 def check_network_status(portal_url_base):
     """
