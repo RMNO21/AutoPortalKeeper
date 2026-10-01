@@ -114,6 +114,8 @@ def load_config():
         with open(cfg_file, "r", encoding="utf-8-sig") as f:
             data = json.load(f)
             portal_url = data.get("portal_url", "").strip()
+            if portal_url and not portal_url.startswith(("http://", "https://")):
+                portal_url = "http://" + portal_url
             raw_accounts = data.get("accounts", [])
             accounts = []
             for acc in raw_accounts:
