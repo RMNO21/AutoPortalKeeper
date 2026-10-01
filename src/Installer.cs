@@ -47,6 +47,8 @@ namespace AutoPortalSetup
 
         // Steps
         private Panel stepLangPanel;
+        private Label lblLangTitle;
+        private GroupBox grpLang;
         private RadioButton rdoFa;
         private RadioButton rdoEn;
 
@@ -177,15 +179,13 @@ namespace AutoPortalSetup
             stepLangPanel.Dock = DockStyle.Fill;
             bodyPanel.Controls.Add(stepLangPanel);
 
-            Label lblLangTitle = new Label();
-            lblLangTitle.Text = "لطفاً زبان نصب را انتخاب کنید / Please select setup language:";
+            lblLangTitle = new Label();
             lblLangTitle.Font = new Font("Segoe UI", 10.5F, FontStyle.Bold);
             lblLangTitle.Location = new Point(15, 20);
             lblLangTitle.AutoSize = true;
             stepLangPanel.Controls.Add(lblLangTitle);
 
-            GroupBox grpLang = new GroupBox();
-            grpLang.Text = "Language / زبان";
+            grpLang = new GroupBox();
             grpLang.Location = new Point(20, 60);
             grpLang.Size = new Size(535, 160);
             stepLangPanel.Controls.Add(grpLang);
@@ -353,12 +353,17 @@ namespace AutoPortalSetup
             isPersian = persian;
             if (isPersian)
             {
+                this.Text = "راهنمای نصب AutoPortal Keeper";
                 lblHeaderTitle.Text = "نصاب هوشمند اتصال خودکار به پرتال‌های اینترنت و وای‌فای";
                 lblHeaderSub.Text = "AutoPortal Keeper - توسعه‌یافته توسط رامان تندرو (@RMNO21)";
+                lblDevCredit.Text = "توسعه‌دهنده: رامان تندرو";
 
                 btnCancel.Text = "انصراف";
                 btnBack.Text = "< قبلی";
-                btnNext.Text = (currentStep == 5) ? "نصب (Install)" : "بعدی >";
+                btnNext.Text = (currentStep == 5) ? "نصب" : "بعدی >";
+
+                lblLangTitle.Text = "لطفاً زبان نصب را انتخاب کنید:";
+                grpLang.Text = "زبان نصب";
 
                 lblWelcomeTitle.Text = "به راهنمای نصب AutoPortal Keeper خوش آمدید.";
                 lblWelcomeText.Text = "این برنامه برای اتصال خودکار، بی‌وقفه و بی‌صدا به انواع شبکه‌ها و پرتال‌های ورود (Captive Portal) در دانشگاه‌ها، سازمان‌ها، خوابگاه‌ها و اماکن عمومی طراحی شده است.\n\n"
@@ -378,6 +383,12 @@ namespace AutoPortalSetup
                 lblPortalUrl.Text = "آدرس صفحه ورود (Portal URL - اختیاری):";
 
                 lblAccTitle.Text = "لیست حساب‌های کاربری (رمزنگاری امن با DPAPI ویندوز):";
+                if (listViewAccounts.Columns.Count >= 3)
+                {
+                    listViewAccounts.Columns[0].Text = "#";
+                    listViewAccounts.Columns[1].Text = "نام کاربری";
+                    listViewAccounts.Columns[2].Text = "رمز عبور (رمزنگاری DPAPI)";
+                }
                 lblUser.Text = "نام کاربری:";
                 lblPass.Text = "رمز عبور:";
                 btnAddAccount.Text = "+ افزودن";
@@ -388,12 +399,17 @@ namespace AutoPortalSetup
             }
             else
             {
+                this.Text = "AutoPortal Keeper - Setup Wizard";
                 lblHeaderTitle.Text = "AutoPortal Keeper Setup Wizard";
                 lblHeaderSub.Text = "Developed by Raman Tondro (@RMNO21)";
+                lblDevCredit.Text = "Developer: Raman Tondro";
 
                 btnCancel.Text = "Cancel";
                 btnBack.Text = "< Back";
                 btnNext.Text = (currentStep == 5) ? "Install" : "Next >";
+
+                lblLangTitle.Text = "Please select setup language:";
+                grpLang.Text = "Setup Language";
 
                 lblWelcomeTitle.Text = "Welcome to AutoPortal Keeper Setup";
                 lblWelcomeText.Text = "This utility provides automated, seamless, and silent background authentication for captive portal networks across universities, campuses, dorms, and public Wi-Fi.\n\n"
@@ -413,6 +429,12 @@ namespace AutoPortalSetup
                 lblPortalUrl.Text = "Portal URL (Optional):";
 
                 lblAccTitle.Text = "Accounts List (Protected with Windows DPAPI):";
+                if (listViewAccounts.Columns.Count >= 3)
+                {
+                    listViewAccounts.Columns[0].Text = "#";
+                    listViewAccounts.Columns[1].Text = "Username";
+                    listViewAccounts.Columns[2].Text = "Password (DPAPI Encrypted)";
+                }
                 lblUser.Text = "Username:";
                 lblPass.Text = "Password:";
                 btnAddAccount.Text = "+ Add";
@@ -457,9 +479,9 @@ namespace AutoPortalSetup
 
             if (step == 5)
             {
-                btnNext.Text = isPersian ? "نصب (Install)" : "Install";
+                btnNext.Text = isPersian ? "نصب" : "Install";
                 string portalDisplay = string.IsNullOrWhiteSpace(txtPortalUrl.Text) 
-                    ? (isPersian ? "تشخیص خودکار ریدایرکت (Auto-Detect)" : "Automatic Redirect Detection") 
+                    ? (isPersian ? "تشخیص خودکار ریدایرکت" : "Automatic Redirect Detection") 
                     : txtPortalUrl.Text.Trim();
                 
                 if (isPersian)

@@ -21,10 +21,13 @@ namespace AutoPortalUninstall
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
 
-            string msg = "آیا مطمئن هستید که می‌خواهید AutoPortal Keeper را به طور کامل از سیستم حذف کنید؟\n\n"
-                       + "Are you sure you want to completely uninstall AutoPortal Keeper?\n\n"
-                       + "Developer: Raman Tondro (@RMNO21)";
-            string title = "Uninstall AutoPortal Keeper | حذف نرم‌افزار";
+            bool isFa = System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName.Equals("fa", StringComparison.OrdinalIgnoreCase);
+
+            string msg = isFa 
+                ? "آیا مطمئن هستید که می‌خواهید AutoPortal Keeper را به طور کامل از سیستم حذف کنید؟\n\nتوسعه‌دهنده: رامان تندرو (@RMNO21)"
+                : "Are you sure you want to completely uninstall AutoPortal Keeper?\n\nDeveloper: Raman Tondro (@RMNO21)";
+            
+            string title = isFa ? "حذف نرم‌افزار AutoPortal Keeper" : "Uninstall AutoPortal Keeper";
 
             DialogResult result = MessageBox.Show(msg, title, MessageBoxButtons.YesNo, MessageBoxIcon.Question);
 
@@ -66,17 +69,16 @@ namespace AutoPortalUninstall
                     };
                     Process.Start(psiDel);
 
-                    MessageBox.Show(
-                        "برنامه با موفقیت کامل از سیستم شما حذف شد.\n"
-                        + "AutoPortal Keeper has been successfully uninstalled from your system.\n\n"
-                        + "Developed by Raman Tondro (@RMNO21)",
-                        "حذف تکمیل شد | Uninstalled",
-                        MessageBoxButtons.OK,
-                        MessageBoxIcon.Information);
+                    string doneMsg = isFa
+                        ? "برنامه با موفقیت کامل از سیستم شما حذف شد.\nتوسعه‌دهنده: رامان تندرو (@RMNO21)"
+                        : "AutoPortal Keeper has been successfully uninstalled from your system.\n\nDeveloped by Raman Tondro (@RMNO21)";
+                    string doneTitle = isFa ? "حذف تکمیل شد" : "Uninstalled";
+
+                    MessageBox.Show(doneMsg, doneTitle, MessageBoxButtons.OK, MessageBoxIcon.Information);
                 }
                 catch (Exception ex)
                 {
-                    MessageBox.Show("خطا در هنگام حذف: " + ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    MessageBox.Show(isFa ? ("خطا در حذف: " + ex.Message) : ("Uninstall error: " + ex.Message), "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
             }
         }
